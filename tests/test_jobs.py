@@ -1,10 +1,12 @@
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from app import jobs, openalex
 from app.main import app
-from app.schemas import JobRequest
+from app.models import Job, JobPaper, Paper
+from app.schemas import JobRequest, JobStatus
 
 WORK = {
     "id": "https://openalex.org/W1",
@@ -20,21 +22,19 @@ WORK = {
 
 
 @pytest.fixture
-def client():
-    jobs._jobs.clear()
-    return TestClient(app)
-
-
-@pytest.fixture
 def fake_fetch(monkeypatch):
-    calls = []
+    class FakeFetch:
+        def __init__(self):
+            self.calls = []
+            self.works = [WORK]
 
-    def fetch(request):
-        calls.append(request)
-        return [WORK]
+        def __call__(self, request):
+            self.calls.append(request)
+            return self.works
 
-    monkeypatch.setattr(openalex, "fetch_works", fetch)
-    return calls
+    fake = FakeFetch()
+    monkeypatch.setattr(openalex, "fetch_works", fake)
+    return fake
 
 
 def test_create_job_returns_queued_summary(client, fake_fetch):
@@ -57,8 +57,9 @@ def test_job_completes_with_normalized_results(client, fake_fetch):
     body = client.get(f"/jobs/{job_id}").json()
 
     assert body["status"] == "COMPLETED"
-    assert body["started_at"] is not None
-    assert body["completed_at"] is not None
+    assert body["created_at"].endswith("Z")
+    assert body["started_at"].endswith("Z")
+    assert body["completed_at"].endswith("Z")
     assert body["papers_found"] == 1
     assert body["results"] == [
         {
@@ -70,7 +71,7 @@ def test_job_completes_with_normalized_results(client, fake_fetch):
             "authors": ["Ada Lovelace"],
         }
     ]
-    assert fake_fetch[0].from_year == 2018
+    assert fake_fetch.calls[0].from_year == 2018
 
 
 def test_upstream_error_marks_job_failed(client, monkeypatch):
@@ -150,3 +151,91 @@ def test_normalize_work_handles_missing_fields():
     assert paper.doi is None
     assert paper.cited_by_count == 0
     assert paper.authors == []
+
+
+def run_job(client, **payload):
+    job_id = client.post("/jobs", json={"query": "q", **payload}).json()["id"]
+    return client.get(f"/jobs/{job_id}").json()
+
+
+def test_jobs_survive_restart(client, fake_fetch):
+    job = run_job(client)
+
+    with TestClient(app) as restarted:
+        body = restarted.get(f"/jobs/{job['id']}").json()
+
+    assert body["status"] == "COMPLETED"
+    assert body["results"] == job["results"]
+
+
+def test_startup_fails_jobs_left_running(session, fake_fetch):
+    for status in (JobStatus.QUEUED, JobStatus.FETCHING, JobStatus.COMPLETED):
+        session.add(Job(query="q", limit=25, sort="relevance", status=status))
+    session.commit()
+
+    with TestClient(app):
+        pass
+
+    statuses = session.scalars(select(Job.status).order_by(Job.status)).all()
+    assert statuses == [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.FAILED]
+    errors = session.scalars(select(Job.error).where(Job.status == JobStatus.FAILED)).all()
+    assert errors == ["interrupted by server restart"] * 2
+
+
+def test_duplicate_works_in_one_response_are_stored_once(client, fake_fetch):
+    other = {**WORK, "id": "https://openalex.org/W2", "title": "Paper Two"}
+    fake_fetch.works = [WORK, other, WORK]
+
+    body = run_job(client)
+
+    assert body["papers_found"] == 2
+    assert [paper["source_id"] for paper in body["results"]] == [WORK["id"], other["id"]]
+
+
+def test_jobs_share_papers_and_refresh_citations(client, session, fake_fetch):
+    first = run_job(client)
+    fake_fetch.works = [{**WORK, "cited_by_count": 50}]
+    second = run_job(client)
+
+    assert session.scalar(select(func.count()).select_from(Paper)) == 1
+    assert session.scalar(select(func.count()).select_from(JobPaper)) == 2
+    assert client.get(f"/jobs/{first['id']}").json()["results"][0]["cited_by_count"] == 50
+    assert second["results"][0]["cited_by_count"] == 50
+
+
+def test_rerunning_a_job_replaces_its_results(client, session, fake_fetch):
+    job = run_job(client)
+
+    jobs.process_job(job["id"], JobRequest(query="q"))
+
+    assert session.scalar(select(func.count()).select_from(JobPaper)) == 1
+    assert client.get(f"/jobs/{job['id']}").json()["papers_found"] == 1
+
+
+def test_failed_job_keeps_no_partial_results(client, session, monkeypatch):
+    def broken_normalize(work):
+        raise KeyError("id")
+
+    monkeypatch.setattr(openalex, "fetch_works", lambda request: [WORK])
+    monkeypatch.setattr(openalex, "normalize_work", broken_normalize)
+
+    body = run_job(client)
+
+    assert body["status"] == "FAILED"
+    assert body["error"] == "KeyError: 'id'"
+    assert session.scalar(select(func.count()).select_from(JobPaper)) == 0
+
+
+def test_list_jobs_filters_and_paginates(client, fake_fetch, monkeypatch):
+    run_job(client, query="a")
+    run_job(client, query="b")
+    monkeypatch.setattr(openalex, "fetch_works", lambda request: 1 / 0)
+    run_job(client, query="c")
+
+    assert [job["query"] for job in client.get("/jobs?status=FAILED").json()] == ["c"]
+    assert [job["query"] for job in client.get("/jobs?limit=1&offset=1").json()] == ["b"]
+    assert client.get("/jobs?limit=0").status_code == 422
+
+
+def test_health(client):
+    assert client.get("/health").json() == {"status": "ok"}

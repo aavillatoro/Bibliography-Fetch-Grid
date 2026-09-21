@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class JobStatus(str, Enum):
@@ -44,6 +44,8 @@ class JobRequest(BaseModel):
 
 
 class Paper(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     source_id: str
     doi: str | None
     title: str | None
@@ -53,6 +55,8 @@ class Paper(BaseModel):
 
 
 class JobSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     query: str
     from_year: int | None
