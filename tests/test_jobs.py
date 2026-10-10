@@ -275,3 +275,11 @@ def test_export_rejects_unfinished_and_unknown_jobs(client, session):
     assert client.get(f"/jobs/{job.id}/export?format=docx").status_code == 422
     missing = "00000000-0000-0000-0000-000000000000"
     assert client.get(f"/jobs/{missing}/export").status_code == 404
+
+
+def test_index_serves_ui(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert client.get("/static/app.js").status_code == 200

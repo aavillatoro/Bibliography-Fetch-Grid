@@ -1,8 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -18,6 +21,8 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
+STATIC_DIR = Path(__file__).parent / "static"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +34,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Bibliography Fetch Grid", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.post("/jobs", response_model=JobSummary, status_code=202)

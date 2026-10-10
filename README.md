@@ -27,7 +27,7 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Interactive docs are at http://localhost:8000/docs.
+The web UI is at http://localhost:8000 and the interactive API docs are at http://localhost:8000/docs.
 
 ## API
 

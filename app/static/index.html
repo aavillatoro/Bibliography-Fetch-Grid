@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bibliography Fetch Grid</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Bibliography Fetch Grid</h1>
+    <a href="/docs">API docs</a>
+  </header>
+
+  <main>
+    <form id="search">
+      <label class="grow">
+        Topic
+        <input name="query" type="search" required maxlength="500" autofocus
+               placeholder='e.g. "distributed systems" consensus'>
+      </label>
+      <label>
+        From year
+        <input name="from_year" type="number" min="1500" max="2100">
+      </label>
+      <label>
+        To year
+        <input name="to_year" type="number" min="1500" max="2100">
+      </label>
+      <label>
+        Papers
+        <select name="limit">
+          <option>25</option>
+          <option>50</option>
+          <option>100</option>
+          <option>200</option>
+        </select>
+      </label>
+      <label>
+        Rank by
+        <select name="sort">
+          <option value="citations_desc">Most cited</option>
+          <option value="year_desc">Newest</option>
+          <option value="relevance">Relevance</option>
+        </select>
+      </label>
+      <button type="submit">Search</button>
+    </form>
+
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <section id="results" hidden>
+      <div class="toolbar">
+        <strong id="count"></strong>
+        <input id="filter" type="search" placeholder="Filter by title, author or venue"
+               aria-label="Filter results">
+        <span class="exports">
+          Export
+          <a data-format="bibtex" download>BibTeX</a>
+          <a data-format="ris" download>RIS</a>
+          <a data-format="csv" download>CSV</a>
+        </span>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="num"><button data-sort="rank">#</button></th>
+              <th><button data-sort="title">Paper</button></th>
+              <th class="num"><button data-sort="publication_year">Year</button></th>
+              <th class="num"><button data-sort="cited_by_count">Citations</button></th>
+              <th><button data-sort="work_type">Type</button></th>
+              <th>Links</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="recent" hidden>
+      <h2>Recent searches</h2>
+      <ul id="recent-list"></ul>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
