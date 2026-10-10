@@ -18,6 +18,10 @@ WORK = {
         {"author": {"id": None, "display_name": "Ada Lovelace"}},
         {"author": {}},
     ],
+    "type": "article",
+    "primary_location": {"source": {"display_name": "Journal of Things"}},
+    "abstract_inverted_index": {"We": [0], "study": [1, 3], "things": [2]},
+    "open_access": {"oa_url": "https://example.org/w1.pdf"},
 }
 
 
@@ -69,6 +73,10 @@ def test_job_completes_with_normalized_results(client, fake_fetch):
             "publication_year": 2020,
             "cited_by_count": 42,
             "authors": ["Ada Lovelace"],
+            "work_type": "article",
+            "venue": "Journal of Things",
+            "abstract": "We study things study",
+            "open_access_url": "https://example.org/w1.pdf",
         }
     ]
     assert fake_fetch.calls[0].from_year == 2018
@@ -151,6 +159,9 @@ def test_normalize_work_handles_missing_fields():
     assert paper.doi is None
     assert paper.cited_by_count == 0
     assert paper.authors == []
+    assert paper.venue is None
+    assert paper.abstract is None
+    assert paper.open_access_url is None
 
 
 def run_job(client, **payload):
@@ -239,3 +250,28 @@ def test_list_jobs_filters_and_paginates(client, fake_fetch, monkeypatch):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_export_downloads_completed_job(client, fake_fetch):
+    job = run_job(client, query='"distributed systems"')
+
+    response = client.get(f"/jobs/{job['id']}/export?format=ris")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-research-info-systems")
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="distributed-systems.ris"'
+    )
+    assert "TI  - Paper One\n" in response.text
+
+
+def test_export_rejects_unfinished_and_unknown_jobs(client, session):
+    job = Job(query="q", limit=25, sort="relevance", status=JobStatus.FETCHING)
+    session.add(job)
+    session.commit()
+
+    assert client.get(f"/jobs/{job.id}/export").status_code == 409
+    assert client.get(f"/jobs/{job.id}/export?format=docx").status_code == 422
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert client.get(f"/jobs/{missing}/export").status_code == 404

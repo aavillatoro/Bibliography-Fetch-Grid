@@ -52,6 +52,13 @@ class Paper(BaseModel):
     publication_year: int | None
     cited_by_count: int
     authors: list[str]
+    work_type: str | None = None
+    venue: str | None = None
+    abstract: str | None = None
+    open_access_url: str | None = None
+
+
+ExportFormat = Literal["bibtex", "ris", "csv"]
 
 
 class JobSummary(BaseModel):

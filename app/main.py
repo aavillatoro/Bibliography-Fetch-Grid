@@ -2,12 +2,19 @@ import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import db, jobs
-from app.schemas import JobDetail, JobRequest, JobStatus, JobSummary
+from app import db, export, jobs
+from app.schemas import (
+    ExportFormat,
+    JobDetail,
+    JobRequest,
+    JobStatus,
+    JobSummary,
+    Paper,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +58,29 @@ def get_job(job_id: UUID, session: Session = Depends(db.get_session)):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.get("/jobs/{job_id}/export")
+def export_job(
+    job_id: UUID,
+    format: ExportFormat = "bibtex",
+    session: Session = Depends(db.get_session),
+):
+    job = jobs.get_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Job has not completed")
+
+    papers = [Paper.model_validate(paper) for paper in job.results]
+    media_type, _ = export.MEDIA_TYPES[format]
+    return Response(
+        export.render(format, papers),
+        media_type=f"{media_type}; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{export.filename(job.query, format)}"'
+        },
+    )
 
 
 @app.get("/health")

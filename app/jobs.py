@@ -80,6 +80,10 @@ def upsert_papers(session: Session, papers: list[schemas.Paper]) -> dict[str, in
             "publication_year": stmt.excluded.publication_year,
             "cited_by_count": stmt.excluded.cited_by_count,
             "authors": stmt.excluded.authors,
+            "work_type": stmt.excluded.work_type,
+            "venue": stmt.excluded.venue,
+            "abstract": stmt.excluded.abstract,
+            "open_access_url": stmt.excluded.open_access_url,
             "updated_at": func.now(),
         },
     ).returning(Paper.source_id, Paper.id)

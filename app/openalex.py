@@ -44,6 +44,8 @@ def normalize_work(work: dict) -> Paper:
         if authorship.get("author", {}).get("display_name")
     ]
 
+    source = (work.get("primary_location") or {}).get("source") or {}
+
     return Paper(
         source_id=work["id"],
         doi=work.get("doi"),
@@ -51,7 +53,23 @@ def normalize_work(work: dict) -> Paper:
         publication_year=work.get("publication_year"),
         cited_by_count=work.get("cited_by_count") or 0,
         authors=authors,
+        work_type=work.get("type"),
+        venue=source.get("display_name"),
+        abstract=rebuild_abstract(work.get("abstract_inverted_index")),
+        open_access_url=(work.get("open_access") or {}).get("oa_url"),
     )
+
+
+def rebuild_abstract(inverted_index: dict[str, list[int]] | None) -> str | None:
+    # openalex ships abstracts as word -> positions for licensing reasons
+    if not inverted_index:
+        return None
+    positions = {
+        position: word
+        for word, word_positions in inverted_index.items()
+        for position in word_positions
+    }
+    return " ".join(positions[i] for i in sorted(positions))
 
 
 def fetch_works(request: JobRequest) -> list[dict]:

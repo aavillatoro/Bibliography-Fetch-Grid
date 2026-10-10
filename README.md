@@ -36,6 +36,7 @@ Interactive docs are at http://localhost:8000/docs.
 | `POST` | `/jobs` | Create a job. Returns `202` with status `QUEUED`. |
 | `GET` | `/jobs` | List jobs, newest first. Query params: `status`, `limit` (max 200), `offset`. |
 | `GET` | `/jobs/{id}` | Job status, timestamps and ranked results. |
+| `GET` | `/jobs/{id}/export` | Download a completed job's results. `format` is `bibtex` (default), `ris` or `csv`. Returns `409` until the job completes. |
 | `GET` | `/health` | Checks the database connection. |
 
 ```json
@@ -51,7 +52,7 @@ POST /jobs
 
 `query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `citations_desc` (default), `year_desc` or `relevance`. `limit` is capped at 200, one OpenAlex page.
 
-Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
+Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
 
 ## Tests
 

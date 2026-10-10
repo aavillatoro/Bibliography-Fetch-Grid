@@ -64,6 +64,10 @@ class Paper(Base):
     publication_year: Mapped[int | None]
     cited_by_count: Mapped[int]
     authors: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    work_type: Mapped[str | None] = mapped_column(String(40))
+    venue: Mapped[str | None] = mapped_column(Text)
+    abstract: Mapped[str | None] = mapped_column(Text)
+    open_access_url: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
