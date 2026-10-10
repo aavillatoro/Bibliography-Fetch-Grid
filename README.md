@@ -37,6 +37,14 @@ The web UI is at http://localhost:8000 and the interactive API docs are at http:
 | `GET` | `/jobs` | List jobs, newest first. Query params: `status`, `limit` (max 200), `offset`. |
 | `GET` | `/jobs/{id}` | Job status, timestamps and ranked results. |
 | `GET` | `/jobs/{id}/export` | Download a completed job's results. `format` is `bibtex` (default), `ris` or `csv`. Returns `409` until the job completes. |
+| `POST` | `/collections` | Create a collection from `{"name": "..."}`. Names are unique; a duplicate returns `409`. |
+| `GET` | `/collections` | List collections by name, each with its `paper_count`. |
+| `GET` | `/collections/{id}` | A collection and its papers, in the order they were added. |
+| `PATCH` | `/collections/{id}` | Rename a collection. |
+| `DELETE` | `/collections/{id}` | Delete a collection. Its papers stay in the database. |
+| `POST` | `/collections/{id}/papers` | Add papers from `{"source_ids": [...]}`, the OpenAlex IDs of papers a job has already fetched. |
+| `DELETE` | `/collections/{id}/papers` | Remove papers. Repeat the `source_id` query param for each one. |
+| `GET` | `/collections/{id}/export` | Download a collection. Same `format` values as the job export. |
 | `GET` | `/health` | Checks the database connection. |
 
 ```json

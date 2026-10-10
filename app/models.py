@@ -11,9 +11,16 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    column_property,
+    mapped_column,
+    relationship,
+)
 
 from app.schemas import JobStatus
 
@@ -87,3 +94,47 @@ class JobPaper(Base):
 
     job: Mapped[Job] = relationship(back_populates="job_papers")
     paper: Mapped[Paper] = relationship(lazy="joined")
+
+
+class Collection(Base):
+    __tablename__ = "collections"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    collection_papers: Mapped[list["CollectionPaper"]] = relationship(
+        order_by=lambda: (CollectionPaper.added_at, CollectionPaper.paper_id),
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    @property
+    def papers(self) -> list["Paper"]:
+        return [collection_paper.paper for collection_paper in self.collection_papers]
+
+
+class CollectionPaper(Base):
+    __tablename__ = "collection_papers"
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True
+    )
+    paper_id: Mapped[int] = mapped_column(
+        ForeignKey("papers.id"), primary_key=True, index=True
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    paper: Mapped[Paper] = relationship(lazy="joined")
+
+
+Collection.paper_count = column_property(
+    select(func.count(CollectionPaper.paper_id))
+    .where(CollectionPaper.collection_id == Collection.id)
+    .correlate_except(CollectionPaper)
+    .scalar_subquery()
+)

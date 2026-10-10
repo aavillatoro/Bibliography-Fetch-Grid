@@ -1,9 +1,16 @@
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 
 class JobStatus(str, Enum):
@@ -80,3 +87,26 @@ class JobSummary(BaseModel):
 
 class JobDetail(JobSummary):
     results: list[Paper] = []
+
+
+class CollectionRequest(BaseModel):
+    name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    ]
+
+
+class CollectionPapersRequest(BaseModel):
+    source_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class CollectionSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    created_at: datetime
+    paper_count: int
+
+
+class CollectionDetail(CollectionSummary):
+    papers: list[Paper] = []

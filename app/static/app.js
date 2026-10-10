@@ -6,20 +6,27 @@ const STATUS_TEXT = {
   PROCESSING: "Processing results…",
 };
 const MAX_AUTHORS = 5;
+const COLUMNS = 7;
 
-const form = document.querySelector("#search");
-const statusLine = document.querySelector("#status");
-const results = document.querySelector("#results");
-const rows = document.querySelector("#rows");
-const count = document.querySelector("#count");
-const filter = document.querySelector("#filter");
-const recent = document.querySelector("#recent");
-const recentList = document.querySelector("#recent-list");
+const $ = (selector) => document.querySelector(selector);
+const form = $("#search");
+const statusLine = $("#status");
+const results = $("#results");
+const rows = $("#rows");
+const filter = $("#filter");
+const selectAll = $("#select-all");
+const target = $("#target");
+const addButton = $("#add-selected");
+const removeButton = $("#remove-selected");
 
-let currentJobId = null;
+// what the grid is showing: { kind: "job" | "collection", id }
+let view = null;
+let collectionName = null;
 let papers = [];
+let visible = [];
 let sortKey = "rank";
 let sortDir = 1;
+const selected = new Set();
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -40,9 +47,21 @@ async function api(path, options) {
   return body;
 }
 
+function send(method, body) {
+  return {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
 function setStatus(text, isError = false) {
   statusLine.textContent = text;
   statusLine.classList.toggle("error", isError);
+}
+
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 form.addEventListener("submit", async (event) => {
@@ -58,11 +77,7 @@ form.addEventListener("submit", async (event) => {
   }
 
   try {
-    const job = await api("/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const job = await api("/jobs", send("POST", payload));
     // the hashchange handler picks the job up from here
     location.hash = job.id;
   } catch (error) {
@@ -70,37 +85,51 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-async function watch(jobId) {
-  let job;
-  try {
-    job = await api(`/jobs/${jobId}`);
-  } catch (error) {
-    if (jobId === currentJobId) setStatus(error.message, true);
-    return;
-  }
-  // the user moved on to another job while this request was in flight
-  if (jobId !== currentJobId) return;
-
-  if (ACTIVE.has(job.status)) {
-    setStatus(STATUS_TEXT[job.status]);
-    setTimeout(() => watch(jobId), POLL_MS);
-    return;
-  }
-
-  if (job.status === "FAILED") {
-    setStatus(`Search failed: ${job.error}`, true);
+function openFromHash() {
+  const hash = location.hash.slice(1);
+  results.hidden = true;
+  setStatus(hash ? "Loading…" : "");
+  if (!hash) {
+    view = null;
+  } else if (hash.startsWith("c/")) {
+    view = { kind: "collection", id: hash.slice(2) };
   } else {
-    setStatus("");
-    showResults(job);
+    view = { kind: "job", id: hash };
   }
-  loadRecent();
+  if (view) load(view);
 }
 
-function openJob(jobId) {
-  currentJobId = jobId;
-  results.hidden = true;
-  setStatus("Loading…");
-  watch(jobId);
+async function load(wanted) {
+  let data;
+  try {
+    data = await api(`/${wanted.kind}s/${wanted.id}`);
+  } catch (error) {
+    if (wanted === view) setStatus(error.message, true);
+    return;
+  }
+  // the user moved on while this request was in flight
+  if (wanted !== view) return;
+
+  if (wanted.kind === "collection") {
+    setStatus("");
+    showGrid(data.papers, data.name);
+    return;
+  }
+
+  if (ACTIVE.has(data.status)) {
+    setStatus(STATUS_TEXT[data.status]);
+    setTimeout(() => load(wanted), POLL_MS);
+    return;
+  }
+
+  if (data.status === "FAILED") {
+    setStatus(`Search failed: ${data.error}`, true);
+  } else {
+    setStatus("");
+    fillForm(data);
+    showGrid(data.results, null);
+  }
+  loadRecent();
 }
 
 function fillForm(job) {
@@ -114,15 +143,20 @@ function fillForm(job) {
   form.limit.value = job.limit;
 }
 
-function showResults(job) {
-  fillForm(job);
-  papers = job.results.map((paper, index) => ({ ...paper, rank: index + 1 }));
+function showGrid(list, name) {
+  papers = list.map((paper, index) => ({ ...paper, rank: index + 1 }));
+  collectionName = name;
   sortKey = "rank";
   sortDir = 1;
   filter.value = "";
+  selected.clear();
+
   for (const link of document.querySelectorAll(".exports a")) {
-    link.href = `/jobs/${job.id}/export?format=${link.dataset.format}`;
+    link.href = `/${view.kind}s/${view.id}/export?format=${link.dataset.format}`;
   }
+  $("#collection-bar").hidden = name === null;
+  $("#collection-name").textContent = name ?? "";
+  removeButton.hidden = name === null;
   results.hidden = false;
   render();
 }
@@ -143,12 +177,12 @@ function matches(paper, needle) {
 
 function render() {
   const needle = filter.value.trim().toLowerCase();
-  const visible = papers.filter((paper) => !needle || matches(paper, needle)).sort(compare);
+  visible = papers.filter((paper) => !needle || matches(paper, needle)).sort(compare);
 
-  count.textContent =
+  $("#count").textContent =
     visible.length === papers.length
-      ? `${papers.length} papers`
-      : `${visible.length} of ${papers.length} papers`;
+      ? plural(papers.length, "paper")
+      : `${visible.length} of ${plural(papers.length, "paper")}`;
 
   for (const button of document.querySelectorAll("th button")) {
     const active = button.dataset.sort === sortKey;
@@ -157,8 +191,17 @@ function render() {
 
   rows.replaceChildren(...visible.map(paperRow));
   if (!visible.length) {
-    rows.append(el("tr", {}, el("td", { colSpan: 6, className: "empty" }, "No papers match.")));
+    const text = papers.length ? "No papers match." : "No papers here yet.";
+    rows.append(el("tr", {}, el("td", { colSpan: COLUMNS, className: "empty" }, text)));
   }
+  renderSelection();
+}
+
+function renderSelection() {
+  $("#selected-count").textContent = `${selected.size} selected`;
+  addButton.disabled = removeButton.disabled = !selected.size;
+  selectAll.checked =
+    visible.length > 0 && visible.every((paper) => selected.has(paper.source_id));
 }
 
 // upstream urls are untrusted, so only link http(s)
@@ -174,6 +217,18 @@ function authorLine(authors) {
 
 function paperRow(paper) {
   const title = paper.title || "Untitled";
+
+  const checkbox = el("input", {
+    type: "checkbox",
+    checked: selected.has(paper.source_id),
+    ariaLabel: `Select ${title}`,
+  });
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) selected.add(paper.source_id);
+    else selected.delete(paper.source_id);
+    renderSelection();
+  });
+
   const main = el("td", {}, el("div", { className: "title" }, safeLink(paper.source_id, title) || title));
   if (paper.authors.length) {
     main.append(el("div", { className: "meta", title: paper.authors.join(", ") }, authorLine(paper.authors)));
@@ -188,16 +243,17 @@ function paperRow(paper) {
   return el(
     "tr",
     {},
+    el("td", {}, checkbox),
     el("td", { className: "num" }, String(paper.rank)),
     main,
     el("td", { className: "num" }, String(paper.publication_year ?? "")),
     el("td", { className: "num" }, paper.cited_by_count.toLocaleString()),
-    el("td", {}, paper.work_type ?? ""),
-    el("td", { className: "links" }, ...links.filter(Boolean)),
+    el("td", { className: "nowrap" }, paper.work_type ?? ""),
+    el("td", { className: "nowrap links" }, ...links.filter(Boolean)),
   );
 }
 
-document.querySelector("thead").addEventListener("click", (event) => {
+$("thead").addEventListener("click", (event) => {
   const key = event.target.dataset?.sort;
   if (!key) return;
   if (key === sortKey) {
@@ -212,11 +268,105 @@ document.querySelector("thead").addEventListener("click", (event) => {
 
 filter.addEventListener("input", render);
 
+selectAll.addEventListener("change", () => {
+  for (const paper of visible) {
+    if (selectAll.checked) selected.add(paper.source_id);
+    else selected.delete(paper.source_id);
+  }
+  render();
+});
+
+addButton.addEventListener("click", async () => {
+  let id = target.value;
+  let name = target.selectedOptions[0].text;
+  try {
+    if (!id) {
+      name = prompt("Name for the new collection")?.trim();
+      if (!name) return;
+      id = (await api("/collections", send("POST", { name }))).id;
+    }
+    const count = selected.size;
+    await api(`/collections/${id}/papers`, send("POST", { source_ids: [...selected] }));
+    selected.clear();
+    render();
+    setStatus(`Saved ${plural(count, "paper")} to “${name}”.`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+  await loadCollections();
+  if (id) target.value = id;
+});
+
+removeButton.addEventListener("click", async () => {
+  const query = new URLSearchParams([...selected].map((id) => ["source_id", id]));
+  try {
+    await api(`/collections/${view.id}/papers?${query}`, { method: "DELETE" });
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+  load(view);
+  loadCollections();
+});
+
+$("#rename-collection").addEventListener("click", async () => {
+  const name = prompt("New name", collectionName)?.trim();
+  if (!name || name === collectionName) return;
+  try {
+    await api(`/collections/${view.id}`, send("PATCH", { name }));
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+  collectionName = name;
+  $("#collection-name").textContent = name;
+  loadCollections();
+});
+
+$("#delete-collection").addEventListener("click", async () => {
+  if (!confirm(`Delete the collection “${collectionName}”? The papers stay in your searches.`)) return;
+  try {
+    await api(`/collections/${view.id}`, { method: "DELETE" });
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+  location.hash = "";
+  loadCollections();
+});
+
+async function loadCollections() {
+  let collections;
+  try {
+    collections = await api("/collections");
+  } catch {
+    return;
+  }
+  const previous = target.value;
+  target.replaceChildren(
+    ...collections.map((collection) => new Option(collection.name, collection.id)),
+    new Option("New collection…", ""),
+  );
+  if (collections.some((collection) => collection.id === previous)) target.value = previous;
+
+  $("#collections").hidden = !collections.length;
+  $("#collection-list").replaceChildren(
+    ...collections.map((collection) =>
+      el(
+        "li",
+        {},
+        el("a", { href: `#c/${collection.id}` }, collection.name),
+        el("span", { className: "meta" }, ` · ${plural(collection.paper_count, "paper")}`),
+      ),
+    ),
+  );
+}
+
 function describe(job) {
   const years =
     job.from_year || job.to_year ? ` · ${job.from_year ?? ""}–${job.to_year ?? ""}` : "";
   const outcome =
-    job.status === "COMPLETED" ? `${job.papers_found} papers` : job.status.toLowerCase();
+    job.status === "COMPLETED" ? plural(job.papers_found, "paper") : job.status.toLowerCase();
   return `${years} · ${outcome} · ${new Date(job.created_at).toLocaleString()}`;
 }
 
@@ -227,8 +377,8 @@ async function loadRecent() {
   } catch {
     return;
   }
-  recent.hidden = !jobs.length;
-  recentList.replaceChildren(
+  $("#recent").hidden = !jobs.length;
+  $("#recent-list").replaceChildren(
     ...jobs.map((job) =>
       el(
         "li",
@@ -240,11 +390,7 @@ async function loadRecent() {
   );
 }
 
-function openFromHash() {
-  const jobId = location.hash.slice(1);
-  if (jobId) openJob(jobId);
-}
-
 window.addEventListener("hashchange", openFromHash);
 openFromHash();
+loadCollections();
 loadRecent();
