@@ -1,6 +1,8 @@
 # Bibliography Fetch Grid
 
-Asynchronous processing jobs over scholarly metadata from [OpenAlex](https://openalex.org). Submit a query, get a job ID back immediately, and poll for normalized, ranked results stored in PostgreSQL.
+A literature search tool built on scholarly metadata from [OpenAlex](https://openalex.org). Search a topic, get a ranked, deduplicated table of papers, save the ones you want into collections, and export them as BibTeX, RIS or CSV for a reference manager.
+
+Each search runs as a background job: the API returns a job ID immediately and the web UI polls until the results are stored in PostgreSQL.
 
 ## Setup
 
