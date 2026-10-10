@@ -20,6 +20,9 @@ def build_params(request: JobRequest) -> dict:
     if year_filter:
         filters.append(year_filter)
 
+    if request.min_citations:
+        filters.append(f"cited_by_count:>{request.min_citations - 1}")
+
     return {
         "filter": ",".join(filters),
         "per-page": request.limit,

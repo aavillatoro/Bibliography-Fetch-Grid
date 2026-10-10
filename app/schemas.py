@@ -32,9 +32,10 @@ class JobRequest(BaseModel):
     )
     from_year: int | None = None
     to_year: int | None = None
+    min_citations: int | None = Field(default=None, ge=0)
     # one upstream page until pagination lands
     limit: int = Field(default=25, ge=1, le=200)
-    sort: SortOrder = "citations_desc"
+    sort: SortOrder = "relevance"
 
     @field_validator("query")
     @classmethod
@@ -75,6 +76,7 @@ class JobSummary(BaseModel):
     query: str
     from_year: int | None
     to_year: int | None
+    min_citations: int | None = None
     limit: int
     sort: SortOrder
     status: JobStatus

@@ -36,6 +36,7 @@ class Job(Base):
     query: Mapped[str] = mapped_column(Text)
     from_year: Mapped[int | None]
     to_year: Mapped[int | None]
+    min_citations: Mapped[int | None]
     limit: Mapped[int] = mapped_column("requested_limit", Integer)
     sort: Mapped[str] = mapped_column(String(20))
     status: Mapped[JobStatus] = mapped_column(

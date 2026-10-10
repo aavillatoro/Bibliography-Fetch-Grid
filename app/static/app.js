@@ -72,7 +72,7 @@ form.addEventListener("submit", async (event) => {
     limit: Number(data.get("limit")),
     sort: data.get("sort"),
   };
-  for (const key of ["from_year", "to_year"]) {
+  for (const key of ["from_year", "to_year", "min_citations"]) {
     if (data.get(key)) payload[key] = Number(data.get(key));
   }
 
@@ -136,6 +136,7 @@ function fillForm(job) {
   form.query.value = job.query;
   form.from_year.value = job.from_year ?? "";
   form.to_year.value = job.to_year ?? "";
+  form.min_citations.value = job.min_citations ?? "";
   form.sort.value = job.sort;
   if (![...form.limit.options].some((option) => Number(option.value) === job.limit)) {
     form.limit.add(new Option(job.limit));
@@ -365,9 +366,10 @@ async function loadCollections() {
 function describe(job) {
   const years =
     job.from_year || job.to_year ? ` · ${job.from_year ?? ""}–${job.to_year ?? ""}` : "";
+  const cited = job.min_citations ? ` · ${job.min_citations}+ citations` : "";
   const outcome =
     job.status === "COMPLETED" ? plural(job.papers_found, "paper") : job.status.toLowerCase();
-  return `${years} · ${outcome} · ${new Date(job.created_at).toLocaleString()}`;
+  return `${years}${cited} · ${outcome} · ${new Date(job.created_at).toLocaleString()}`;
 }
 
 async function loadRecent() {

@@ -48,7 +48,7 @@ def test_create_job_returns_queued_summary(client, fake_fetch):
     body = response.json()
     assert body["status"] == "QUEUED"
     assert body["limit"] == 25
-    assert body["sort"] == "citations_desc"
+    assert body["sort"] == "relevance"
     assert "results" not in body
 
 
@@ -119,6 +119,7 @@ def test_unknown_job_returns_404(client):
         {"query": "x", "limit": 0},
         {"query": "x", "limit": 201},
         {"query": "x", "sort": "random"},
+        {"query": "x", "min_citations": -1},
         {"query": "x", "from_year": 2026, "to_year": 2018},
     ],
 )
@@ -135,6 +136,15 @@ def test_build_params_maps_sort_and_year_range():
         "per-page": 50,
         "sort": "publication_year:desc",
     }
+
+
+def test_build_params_filters_by_min_citations():
+    params = openalex.build_params(JobRequest(query="q", min_citations=50))
+    assert params["filter"] == "title_and_abstract.search:q,cited_by_count:>49"
+    assert params["sort"] == "relevance_score:desc"
+
+    unfiltered = openalex.build_params(JobRequest(query="q", min_citations=0))
+    assert "cited_by_count" not in unfiltered["filter"]
 
 
 def test_build_params_strips_commas_from_query():

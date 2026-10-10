@@ -53,12 +53,13 @@ POST /jobs
   "query": "\"distributed systems\"",
   "from_year": 2018,
   "to_year": 2026,
+  "min_citations": 50,
   "limit": 200,
-  "sort": "citations_desc"
+  "sort": "relevance"
 }
 ```
 
-`query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `citations_desc` (default), `year_desc` or `relevance`. `limit` is capped at 200, one OpenAlex page.
+`query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `relevance` (default), `citations_desc` or `year_desc`. `min_citations` drops papers cited fewer times than that, so it combines with any sort. `limit` is capped at 200, one OpenAlex page.
 
 Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
 

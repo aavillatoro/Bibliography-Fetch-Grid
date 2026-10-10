@@ -28,6 +28,10 @@
         <input name="to_year" type="number" min="1500" max="2100">
       </label>
       <label>
+        Min citations
+        <input name="min_citations" type="number" min="0">
+      </label>
+      <label>
         Papers
         <select name="limit">
           <option>25</option>
@@ -39,9 +43,9 @@
       <label>
         Rank by
         <select name="sort">
+          <option value="relevance">Relevance</option>
           <option value="citations_desc">Most cited</option>
           <option value="year_desc">Newest</option>
-          <option value="relevance">Relevance</option>
         </select>
       </label>
       <button type="submit">Search</button>
