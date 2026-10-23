@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     test_database_url: str | None = None
     openalex_mailto: str | None = None
     openalex_api_key: str | None = None
+    # tests turn this off and step the worker by hand
+    run_worker: bool = True
 
 
 settings = Settings()

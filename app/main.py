@@ -3,13 +3,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import collections, db, export, jobs
+from app.config import settings
 from app.models import Collection
 from app.schemas import (
     CollectionDetail,
@@ -23,6 +24,7 @@ from app.schemas import (
     JobSummary,
     Paper,
 )
+from app.worker import Worker
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +33,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    with db.SessionLocal() as session:
-        interrupted = jobs.fail_interrupted_jobs(session)
-    if interrupted:
-        logger.warning("marked %d interrupted jobs as failed", interrupted)
+    app.state.worker = Worker()
+    if settings.run_worker:
+        app.state.worker.start()
     yield
+    app.state.worker.stop()
 
 
 app = FastAPI(title="Bibliography Fetch Grid", lifespan=lifespan)
@@ -50,12 +52,9 @@ def index():
 @app.post("/jobs", response_model=JobSummary, status_code=202)
 def create_job(
     request: JobRequest,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(db.get_session),
 ):
-    job = jobs.create_job(session, request)
-    background_tasks.add_task(jobs.process_job, job.id, request)
-    return job
+    return jobs.create_job(session, request)
 
 
 @app.get("/jobs", response_model=list[JobSummary])

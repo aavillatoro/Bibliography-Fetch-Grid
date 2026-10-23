@@ -37,6 +37,11 @@ def session(engine):
         yield session
 
 
+@pytest.fixture(autouse=True)
+def manual_worker(monkeypatch):
+    monkeypatch.setattr(settings, "run_worker", False)
+
+
 @pytest.fixture
 def client(session):
     with TestClient(app) as client:

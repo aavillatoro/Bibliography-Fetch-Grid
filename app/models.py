@@ -49,6 +49,8 @@ class Job(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     papers_found: Mapped[int | None]
     error: Mapped[str | None] = mapped_column(Text)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     job_papers: Mapped[list["JobPaper"]] = relationship(
         back_populates="job",

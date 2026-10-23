@@ -1,9 +1,13 @@
+import threading
+import time
+from datetime import timedelta
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
-from app import jobs, openalex
+from app import db, jobs, openalex, worker
 from app.config import settings
 from app.main import app
 from app.models import Job, JobPaper, Paper
@@ -58,6 +62,7 @@ def test_job_completes_with_normalized_results(client, fake_fetch):
         "/jobs",
         json={"query": "distributed systems", "from_year": 2018, "to_year": 2026, "limit": 10},
     ).json()["id"]
+    drain()
 
     body = client.get(f"/jobs/{job_id}").json()
 
@@ -90,6 +95,7 @@ def test_upstream_error_marks_job_failed(client, monkeypatch):
     monkeypatch.setattr(openalex, "fetch_works", fetch)
 
     job_id = client.post("/jobs", json={"query": "x"}).json()["id"]
+    drain()
     body = client.get(f"/jobs/{job_id}").json()
 
     assert body["status"] == "FAILED"
@@ -179,8 +185,14 @@ def test_normalize_work_handles_missing_fields():
     assert paper.open_access_url is None
 
 
+def drain():
+    while worker.run_once():
+        pass
+
+
 def run_job(client, **payload):
     job_id = client.post("/jobs", json={"query": "q", **payload}).json()["id"]
+    drain()
     return client.get(f"/jobs/{job_id}").json()
 
 
@@ -194,18 +206,142 @@ def test_jobs_survive_restart(client, fake_fetch):
     assert body["results"] == job["results"]
 
 
-def test_startup_fails_jobs_left_running(session, fake_fetch):
-    for status in (JobStatus.QUEUED, JobStatus.FETCHING, JobStatus.COMPLETED):
-        session.add(Job(query="q", limit=25, sort="relevance", status=status))
+def add_job(session, **fields):
+    defaults = {"query": "q", "limit": 25, "sort": "relevance", "status": JobStatus.QUEUED}
+    job = Job(**{**defaults, **fields})
+    session.add(job)
+    session.commit()
+    return job
+
+
+def stale():
+    return jobs.now() - worker.STALE_AFTER - timedelta(seconds=1)
+
+
+def test_worker_claims_jobs_oldest_first(session, fake_fetch):
+    first = add_job(session, created_at=jobs.now() - timedelta(minutes=1))
+    second = add_job(session)
+
+    assert worker.run_once()
+    session.refresh(first)
+    session.refresh(second)
+    assert (first.status, second.status) == (JobStatus.COMPLETED, JobStatus.QUEUED)
+
+    assert worker.run_once()
+    assert not worker.run_once()
+
+
+def test_claim_marks_job_fetching_with_heartbeat(session, monkeypatch):
+    job = add_job(session, min_citations=5, limit=50)
+    seen = {}
+
+    def fetch(request):
+        with db.SessionLocal() as other:
+            row = other.get(Job, job.id)
+            seen.update(status=row.status, attempts=row.attempts, heartbeat_at=row.heartbeat_at)
+        seen["request"] = request
+        return [WORK]
+
+    monkeypatch.setattr(openalex, "fetch_works", fetch)
+    worker.run_once()
+
+    assert seen["status"] == JobStatus.FETCHING
+    assert seen["attempts"] == 1
+    assert seen["heartbeat_at"] is not None
+    assert (seen["request"].min_citations, seen["request"].limit) == (5, 50)
+
+
+def test_claim_skips_jobs_locked_by_another_worker(session, engine):
+    job = add_job(session)
+
+    with engine.connect() as other:
+        other.execute(select(Job).where(Job.id == job.id).with_for_update())
+        with db.SessionLocal() as claimer:
+            assert worker.claim_job(claimer) is None
+
+
+def test_heartbeat_updates_while_job_runs(session, monkeypatch):
+    monkeypatch.setattr(worker, "HEARTBEAT_INTERVAL", 0.01)
+    job = add_job(session, status=JobStatus.FETCHING, heartbeat_at=stale())
+    session.expunge_all()
+
+    with worker.heartbeat(job.id):
+        deadline = time.monotonic() + 5
+        while session.get(Job, job.id).heartbeat_at < jobs.now() - timedelta(seconds=5):
+            assert time.monotonic() < deadline, "heartbeat never updated"
+            session.expunge_all()
+            time.sleep(0.01)
+
+
+def test_stale_jobs_are_requeued_and_rerun(session, fake_fetch):
+    job = add_job(session, status=JobStatus.PROCESSING, heartbeat_at=stale(), attempts=1)
+
+    assert worker.run_once()
+
+    session.refresh(job)
+    assert job.status == JobStatus.COMPLETED
+    assert job.attempts == 2
+
+
+def test_jobs_claimed_before_heartbeats_existed_count_as_stale(session, fake_fetch):
+    job = add_job(session, status=JobStatus.FETCHING, heartbeat_at=None)
+
+    assert worker.run_once()
+
+    session.refresh(job)
+    assert job.status == JobStatus.COMPLETED
+
+
+def test_live_jobs_are_left_alone(session, fake_fetch):
+    job = add_job(session, status=JobStatus.FETCHING, heartbeat_at=jobs.now(), attempts=1)
+
+    assert not worker.run_once()
+
+    session.refresh(job)
+    assert (job.status, job.attempts) == (JobStatus.FETCHING, 1)
+
+
+def test_stale_jobs_fail_after_max_attempts(session, fake_fetch):
+    job = add_job(
+        session, status=JobStatus.FETCHING, heartbeat_at=stale(), attempts=worker.MAX_ATTEMPTS
+    )
+
+    assert not worker.run_once()
+
+    session.refresh(job)
+    assert job.status == JobStatus.FAILED
+    assert job.error == "interrupted 3 times by a crash or restart, giving up"
+    assert job.completed_at is not None
+    assert fake_fetch.calls == []
+
+
+def test_job_errors_are_not_retried(session, monkeypatch):
+    monkeypatch.setattr(openalex, "fetch_works", lambda request: 1 / 0)
+    job = add_job(session)
+
+    worker.run_once()
+    session.execute(update(Job).values(heartbeat_at=stale()))
     session.commit()
 
-    with TestClient(app):
-        pass
+    assert not worker.run_once()
+    session.refresh(job)
+    assert (job.status, job.attempts) == (JobStatus.FAILED, 1)
 
-    statuses = session.scalars(select(Job.status).order_by(Job.status)).all()
-    assert statuses == [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.FAILED]
-    errors = session.scalars(select(Job.error).where(Job.status == JobStatus.FAILED)).all()
-    assert errors == ["interrupted by server restart"] * 2
+
+def test_server_runs_worker_and_stops_it_on_shutdown(session, fake_fetch, monkeypatch):
+    monkeypatch.setattr(settings, "run_worker", True)
+    monkeypatch.setattr(worker, "POLL_INTERVAL", 0.01)
+
+    with TestClient(app) as client:
+        job_id = client.post("/jobs", json={"query": "q"}).json()["id"]
+        deadline = time.monotonic() + 5
+        while client.get(f"/jobs/{job_id}").json()["status"] != "COMPLETED":
+            assert time.monotonic() < deadline, "worker never finished the job"
+            time.sleep(0.01)
+        running = app.state.worker
+
+    assert not running.running
+    assert not any(thread.name == "job-worker" for thread in threading.enumerate())
 
 
 def test_duplicate_works_in_one_response_are_stored_once(client, fake_fetch):

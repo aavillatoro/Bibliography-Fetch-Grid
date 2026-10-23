@@ -12,9 +12,6 @@ from app.schemas import JobRequest, JobStatus
 
 logger = logging.getLogger(__name__)
 
-ACTIVE_STATUSES = (JobStatus.QUEUED, JobStatus.FETCHING, JobStatus.PROCESSING)
-
-
 def now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -39,22 +36,6 @@ def list_jobs(
     if status is not None:
         query = query.where(Job.status == status)
     return list(session.scalars(query))
-
-
-def fail_interrupted_jobs(session: Session) -> int:
-    # background tasks die with the api process, so anything still active
-    # at startup can never finish. assumes a single api process.
-    result = session.execute(
-        update(Job)
-        .where(Job.status.in_(ACTIVE_STATUSES))
-        .values(
-            status=JobStatus.FAILED,
-            completed_at=now(),
-            error="interrupted by server restart",
-        )
-    )
-    session.commit()
-    return result.rowcount
 
 
 def dedupe(papers: list[schemas.Paper]) -> list[schemas.Paper]:

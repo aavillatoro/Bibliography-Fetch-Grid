@@ -63,7 +63,9 @@ POST /jobs
 
 `query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `relevance` (default), `citations_desc` or `year_desc`. `min_citations` drops papers cited fewer times than that, so it combines with any sort. `limit` is capped at 500. OpenAlex returns at most 100 works per request, so larger limits fetch several pages, in rank order with duplicates dropped.
 
-Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
+Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs.
+
+Jobs are queued in Postgres and run one at a time by a worker thread inside the API process, so queued jobs survive a restart. A running job updates a heartbeat every 10 seconds. If the process dies mid-job, the job is requeued once its heartbeat is 60 seconds old and runs again, up to 3 attempts, then fails. A rerun spends that job's OpenAlex calls again. Errors raised by the job itself, such as an OpenAlex failure, fail it without a retry. Running several API processes is safe: each claims jobs with `SELECT … FOR UPDATE SKIP LOCKED`. On shutdown the worker stops taking jobs and waits up to 30 seconds for the current one.
 
 OpenAlex bills per request: $1 per 1,000 search calls, against a daily budget of $0.10 without a key and $1 with a free API key. A job costs one call per 100 papers, so a 500-paper job is 5 calls. Set `OPENALEX_API_KEY` to raise the daily budget. `OPENALEX_MAILTO` is an optional contact email sent to OpenAlex with each request.
 
