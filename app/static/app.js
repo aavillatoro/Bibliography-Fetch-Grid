@@ -19,8 +19,9 @@ const target = $("#target");
 const addButton = $("#add-selected");
 const removeButton = $("#remove-selected");
 
-// what the grid is showing: { kind: "job" | "collection", id }
+// what the grid is showing: { kind: "job" | "collection" | "diff", id }
 let view = null;
+let savedSearches = [];
 let collectionName = null;
 let papers = [];
 let visible = [];
@@ -64,8 +65,7 @@ function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
+function searchPayload() {
   const data = new FormData(form);
   const payload = {
     query: data.get("query"),
@@ -75,9 +75,13 @@ form.addEventListener("submit", async (event) => {
   for (const key of ["from_year", "to_year", "min_citations"]) {
     if (data.get(key)) payload[key] = Number(data.get(key));
   }
+  return payload;
+}
 
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
   try {
-    const job = await api("/jobs", send("POST", payload));
+    const job = await api("/jobs", send("POST", searchPayload()));
     // the hashchange handler picks the job up from here
     location.hash = job.id;
   } catch (error) {
@@ -93,6 +97,8 @@ function openFromHash() {
     view = null;
   } else if (hash.startsWith("c/")) {
     view = { kind: "collection", id: hash.slice(2) };
+  } else if (hash.startsWith("s/")) {
+    view = { kind: "diff", id: hash.slice(2) };
   } else {
     view = { kind: "job", id: hash };
   }
@@ -100,15 +106,28 @@ function openFromHash() {
 }
 
 async function load(wanted) {
+  const path =
+    wanted.kind === "diff" ? `/saved-searches/${wanted.id}/diff` : `/${wanted.kind}s/${wanted.id}`;
   let data;
   try {
-    data = await api(`/${wanted.kind}s/${wanted.id}`);
+    data = await api(path);
   } catch (error) {
     if (wanted === view) setStatus(error.message, true);
     return;
   }
   // the user moved on while this request was in flight
   if (wanted !== view) return;
+
+  if (wanted.kind === "diff") {
+    const name = savedSearches.find((search) => search.id === wanted.id)?.name ?? "this search";
+    setStatus(
+      data.previous_job_id
+        ? `${plural(data.papers.length, "new paper")} in “${name}” since the previous run.`
+        : `“${name}” needs two completed runs to compare.`,
+    );
+    showGrid(data.papers, null);
+    return;
+  }
 
   if (wanted.kind === "collection") {
     setStatus("");
@@ -130,6 +149,7 @@ async function load(wanted) {
     showGrid(data.results, null);
   }
   loadRecent();
+  loadSaved();
 }
 
 function fillForm(job) {
@@ -155,9 +175,10 @@ function showGrid(list, name) {
   for (const link of document.querySelectorAll(".exports a")) {
     link.href = `/${view.kind}s/${view.id}/export?format=${link.dataset.format}`;
   }
-  $("#collection-bar").hidden = name === null;
+  $(".exports").hidden = view.kind === "diff";
+  $("#collection-bar").hidden = view.kind !== "collection";
   $("#collection-name").textContent = name ?? "";
-  removeButton.hidden = name === null;
+  removeButton.hidden = view.kind !== "collection";
   results.hidden = false;
   render();
 }
@@ -363,6 +384,84 @@ async function loadCollections() {
   );
 }
 
+$("#save-search").addEventListener("click", async () => {
+  if (!form.reportValidity()) return;
+  const name = prompt("Name for this saved search", form.query.value.trim())?.trim();
+  if (!name) return;
+  const payload = { ...searchPayload(), name };
+  if (form.schedule.value) payload.schedule = form.schedule.value;
+  try {
+    await api("/saved-searches", send("POST", payload));
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+  setStatus(
+    payload.schedule
+      ? `Saved “${name}”. It runs ${payload.schedule}, starting now.`
+      : `Saved “${name}”.`,
+  );
+  loadSaved();
+});
+
+function lastRun(job) {
+  if (!job) return "not run yet";
+  if (ACTIVE.has(job.status)) return "running now";
+  const when = new Date(job.created_at).toLocaleString();
+  return job.status === "FAILED" ? `last run failed ${when}` : `last run ${when}`;
+}
+
+function savedRow(search) {
+  const name = search.latest_job
+    ? el("a", { href: `#${search.latest_job.id}` }, search.name)
+    : el("span", {}, search.name);
+
+  const runButton = el("button", { type: "button" }, "Run now");
+  runButton.addEventListener("click", async () => {
+    try {
+      const job = await api(`/saved-searches/${search.id}/run`, { method: "POST" });
+      location.hash = job.id;
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  const deleteButton = el("button", { type: "button" }, "Delete");
+  deleteButton.addEventListener("click", async () => {
+    if (!confirm(`Delete the saved search “${search.name}”? Its past runs stay in Recent searches.`)) return;
+    try {
+      await api(`/saved-searches/${search.id}`, { method: "DELETE" });
+    } catch (error) {
+      setStatus(error.message, true);
+      return;
+    }
+    loadSaved();
+  });
+
+  const row = el("li", {}, name);
+  if (search.new_since_last_run) {
+    row.append(
+      el("a", { className: "badge", href: `#s/${search.id}` }, `${search.new_since_last_run} new since last run`),
+    );
+  }
+  row.append(
+    el("span", { className: "meta" }, ` · ${search.query} · ${search.schedule ?? "manual"} · ${lastRun(search.latest_job)}`),
+    runButton,
+    deleteButton,
+  );
+  return row;
+}
+
+async function loadSaved() {
+  try {
+    savedSearches = await api("/saved-searches");
+  } catch {
+    return;
+  }
+  $("#saved").hidden = !savedSearches.length;
+  $("#saved-list").replaceChildren(...savedSearches.map(savedRow));
+}
+
 function describe(job) {
   const years =
     job.from_year || job.to_year ? ` · ${job.from_year ?? ""}–${job.to_year ?? ""}` : "";
@@ -393,6 +492,8 @@ async function loadRecent() {
 }
 
 window.addEventListener("hashchange", openFromHash);
-openFromHash();
+loadSaved().then(openFromHash);
 loadCollections();
 loadRecent();
+// scheduled runs finish in the background
+setInterval(loadSaved, 60_000);

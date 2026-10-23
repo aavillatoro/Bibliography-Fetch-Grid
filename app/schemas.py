@@ -22,6 +22,8 @@ class JobStatus(str, Enum):
 
 
 SortOrder = Literal["citations_desc", "year_desc", "relevance"]
+Schedule = Literal["daily", "weekly"]
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class JobRequest(BaseModel):
@@ -84,6 +86,7 @@ class JobSummary(BaseModel):
     completed_at: datetime | None = None
     papers_found: int | None = None
     error: str | None = None
+    saved_search_id: UUID | None = None
 
 
 class JobDetail(JobSummary):
@@ -91,9 +94,7 @@ class JobDetail(JobSummary):
 
 
 class CollectionRequest(BaseModel):
-    name: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
-    ]
+    name: Name
 
 
 class CollectionPapersRequest(BaseModel):
@@ -111,3 +112,36 @@ class CollectionSummary(BaseModel):
 
 class CollectionDetail(CollectionSummary):
     papers: list[Paper] = []
+
+
+class SavedSearchRequest(JobRequest):
+    name: Name
+    schedule: Schedule | None = None
+
+
+class SavedSearchSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    query: str
+    from_year: int | None
+    to_year: int | None
+    min_citations: int | None
+    limit: int
+    sort: SortOrder
+    schedule: Schedule | None
+    next_run_at: datetime | None
+    created_at: datetime
+    latest_job: JobSummary | None = None
+    new_since_last_run: int = 0
+
+
+class SavedSearchDetail(SavedSearchSummary):
+    runs: list[JobSummary] = []
+
+
+class SavedSearchDiff(BaseModel):
+    latest_job_id: UUID | None
+    previous_job_id: UUID | None
+    papers: list[Paper]

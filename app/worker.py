@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app import db, jobs
+from app import db, jobs, saved_searches
 from app.models import Job
 from app.schemas import JobRequest, JobStatus
 
@@ -54,14 +54,7 @@ def claim_job(session: Session) -> tuple[UUID, JobRequest] | None:
     if job is None:
         return None
 
-    request = JobRequest(
-        query=job.query,
-        from_year=job.from_year,
-        to_year=job.to_year,
-        min_citations=job.min_citations,
-        limit=job.limit,
-        sort=job.sort,
-    )
+    request = jobs.request_from(job)
     session.execute(
         update(Job)
         .where(Job.id == job.id)
@@ -98,6 +91,8 @@ def heartbeat(job_id: UUID):
 def run_once() -> bool:
     with db.SessionLocal() as session:
         requeue_stale_jobs(session)
+        saved_searches.enqueue_due_searches(session)
+        session.commit()
         claimed = claim_job(session)
     if claimed is None:
         return False

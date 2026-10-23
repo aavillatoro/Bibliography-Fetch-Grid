@@ -16,11 +16,27 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_job(session: Session, request: JobRequest) -> Job:
-    job = Job(status=JobStatus.QUEUED, created_at=now(), **request.model_dump())
+def new_job(request: JobRequest, saved_search_id: UUID | None = None) -> Job:
+    return Job(
+        status=JobStatus.QUEUED,
+        created_at=now(),
+        saved_search_id=saved_search_id,
+        **request.model_dump(),
+    )
+
+
+def create_job(
+    session: Session, request: JobRequest, saved_search_id: UUID | None = None
+) -> Job:
+    job = new_job(request, saved_search_id)
     session.add(job)
     session.commit()
     return job
+
+
+def request_from(row) -> JobRequest:
+    # jobs and saved searches store the same request columns
+    return JobRequest.model_validate(row, from_attributes=True)
 
 
 def get_job(session: Session, job_id: UUID) -> Job | None:

@@ -9,9 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import collections, db, export, jobs
+from app import collections, db, export, jobs, saved_searches
 from app.config import settings
-from app.models import Collection
+from app.models import Collection, SavedSearch
 from app.schemas import (
     CollectionDetail,
     CollectionPapersRequest,
@@ -23,6 +23,10 @@ from app.schemas import (
     JobStatus,
     JobSummary,
     Paper,
+    SavedSearchDetail,
+    SavedSearchDiff,
+    SavedSearchRequest,
+    SavedSearchSummary,
 )
 from app.worker import Worker
 
@@ -186,6 +190,68 @@ def export_collection(
     collection: Collection = Depends(require_collection),
 ):
     return export_response(collection.name, format, collection.papers)
+
+
+def require_saved_search(
+    search_id: UUID, session: Session = Depends(db.get_session)
+) -> SavedSearch:
+    search = saved_searches.get_saved_search(session, search_id)
+    if search is None:
+        raise HTTPException(status_code=404, detail="Saved search not found")
+    return search
+
+
+@app.post("/saved-searches", response_model=SavedSearchSummary, status_code=201)
+def create_saved_search(
+    request: SavedSearchRequest, session: Session = Depends(db.get_session)
+):
+    try:
+        search = saved_searches.create_saved_search(session, request)
+    except saved_searches.NameTaken:
+        raise HTTPException(
+            status_code=409, detail="A saved search with that name already exists"
+        )
+    return saved_searches.summarize(session, search)
+
+
+@app.get("/saved-searches", response_model=list[SavedSearchSummary])
+def list_saved_searches(session: Session = Depends(db.get_session)):
+    return [
+        saved_searches.summarize(session, search)
+        for search in saved_searches.list_saved_searches(session)
+    ]
+
+
+@app.get("/saved-searches/{search_id}", response_model=SavedSearchDetail)
+def get_saved_search(
+    search: SavedSearch = Depends(require_saved_search),
+    session: Session = Depends(db.get_session),
+):
+    return saved_searches.detail(session, search)
+
+
+@app.delete("/saved-searches/{search_id}", status_code=204)
+def delete_saved_search(
+    search: SavedSearch = Depends(require_saved_search),
+    session: Session = Depends(db.get_session),
+):
+    saved_searches.delete_saved_search(session, search)
+
+
+@app.post("/saved-searches/{search_id}/run", response_model=JobSummary, status_code=202)
+def run_saved_search(
+    search: SavedSearch = Depends(require_saved_search),
+    session: Session = Depends(db.get_session),
+):
+    return saved_searches.run_saved_search(session, search)
+
+
+@app.get("/saved-searches/{search_id}/diff", response_model=SavedSearchDiff)
+def diff_saved_search(
+    search: SavedSearch = Depends(require_saved_search),
+    session: Session = Depends(db.get_session),
+):
+    return saved_searches.diff(session, search.id)
 
 
 @app.get("/health")

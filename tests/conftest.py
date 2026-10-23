@@ -8,7 +8,7 @@ from app import db
 from app.config import settings
 from app.main import app
 
-TABLES = "collection_papers, collections, job_papers, papers, jobs"
+TABLES = "collection_papers, collections, job_papers, papers, jobs, saved_searches"
 
 
 @pytest.fixture(scope="session")

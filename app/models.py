@@ -51,6 +51,10 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(Text)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # set null so deleting a saved search keeps its past runs in the job history
+    saved_search_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("saved_searches.id", ondelete="SET NULL"), index=True
+    )
 
     job_papers: Mapped[list["JobPaper"]] = relationship(
         back_populates="job",
@@ -62,6 +66,25 @@ class Job(Base):
     @property
     def results(self) -> list["Paper"]:
         return [job_paper.paper for job_paper in self.job_papers]
+
+
+class SavedSearch(Base):
+    __tablename__ = "saved_searches"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    query: Mapped[str] = mapped_column(Text)
+    from_year: Mapped[int | None]
+    to_year: Mapped[int | None]
+    min_citations: Mapped[int | None]
+    limit: Mapped[int] = mapped_column("requested_limit", Integer)
+    sort: Mapped[str] = mapped_column(String(20))
+    schedule: Mapped[str | None] = mapped_column(String(10))
+    # null when unscheduled
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Paper(Base):
