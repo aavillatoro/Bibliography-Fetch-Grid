@@ -39,6 +39,12 @@ docker compose up
 
 This builds the API image, starts Postgres 17, applies migrations and serves the API at http://localhost:8000. No local Python or Postgres is needed, and `.env` is optional: compose reads `OPENALEX_API_KEY`, `OPENALEX_MAILTO` and `POSTGRES_PASSWORD` (default `change-me`) from it when present and sets `DATABASE_URL` itself. The database lives in the `pgdata` volume. After code changes, run `docker compose up --build`; `docker compose down -v` deletes the database. Requires Docker Compose 2.24 or later.
 
+## Free hosting
+
+The job worker runs inside the API process, so it stops whenever the process does. On Render's free tier the service sleeps after 15 minutes without HTTP requests, and the next request waits about a minute while it wakes. While it sleeps, queued jobs wait and scheduled saved searches don't run; a due search runs on the first wake after its due time. An open tab keeps the service awake, because the page refreshes the saved-search list every minute.
+
+Neon's free Postgres suspends after 5 minutes without queries, so the first connection after a wake also waits for the database to start. The worker queries every second while the API is awake, which keeps Neon awake too and counts against its 100 CU-hours a month: about 400 awake hours at 0.25 CU.
+
 ## API
 
 | Method | Path | |
