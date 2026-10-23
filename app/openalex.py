@@ -8,6 +8,7 @@ from app.config import settings
 from app.schemas import JobRequest, Paper
 
 BASE_URL = "https://api.openalex.org/works"
+MAX_PER_PAGE = 100
 
 MAX_ATTEMPTS = 3
 BASE_DELAY = 1.0
@@ -35,7 +36,7 @@ def build_params(request: JobRequest) -> dict:
 
     return {
         "filter": ",".join(filters),
-        "per-page": request.limit,
+        "per_page": min(request.limit, MAX_PER_PAGE),
         "sort": SORT_PARAMS[request.sort],
     }
 
@@ -96,11 +97,31 @@ def fetch_works(request: JobRequest) -> list[dict]:
     if settings.openalex_api_key:
         params["api_key"] = settings.openalex_api_key
 
+    works = []
+    seen = set()
+    page = 1
+    while len(works) < request.limit:
+        results = fetch_page({**params, "page": page})
+        # rankings can shift between page requests, repeating a work
+        for work in results:
+            if work["id"] not in seen:
+                seen.add(work["id"])
+                works.append(work)
+        if len(results) < params["per_page"]:
+            break
+        page += 1
+    return works[: request.limit]
+
+
+def fetch_page(params: dict) -> list[dict]:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = httpx.get(BASE_URL, params=params, timeout=10)
         if response.is_success:
             return response.json()["results"]
-        if not is_retryable(response.status_code):
+        if response.status_code == 429:
+            # billing is per request, so retrying a spent budget only adds calls
+            raise OpenAlexError(rate_limit_message())
+        if response.status_code < 500:
             # httpx's own error includes the url, which would leak api_key into job.error
             raise OpenAlexError(f"openalex returned {response.status_code}")
         if attempt < MAX_ATTEMPTS:
@@ -111,8 +132,11 @@ def fetch_works(request: JobRequest) -> list[dict]:
     )
 
 
-def is_retryable(status_code: int) -> bool:
-    return status_code == 429 or status_code >= 500
+def rate_limit_message() -> str:
+    message = "openalex daily budget or rate limit hit (429), try again later"
+    if not settings.openalex_api_key:
+        message += " or set OPENALEX_API_KEY for a larger budget"
+    return message
 
 
 def retry_delay(response: httpx.Response, attempt: int) -> float:

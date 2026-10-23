@@ -61,11 +61,13 @@ POST /jobs
 }
 ```
 
-`query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `relevance` (default), `citations_desc` or `year_desc`. `min_citations` drops papers cited fewer times than that, so it combines with any sort. `limit` is capped at 200, one OpenAlex page.
+`query` is matched against titles and abstracts; double quotes force a phrase match. `sort` is `relevance` (default), `citations_desc` or `year_desc`. `min_citations` drops papers cited fewer times than that, so it combines with any sort. `limit` is capped at 500. OpenAlex returns at most 100 works per request, so larger limits fetch several pages, in rank order with duplicates dropped.
 
 Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
 
-OpenAlex requests that get a 429 or 5xx are retried up to 3 attempts, waiting for `Retry-After` when sent and backing off exponentially otherwise. Set `OPENALEX_MAILTO` to your email to use OpenAlex's polite pool, and `OPENALEX_API_KEY` if you have an OpenAlex API key.
+OpenAlex bills per request: $1 per 1,000 search calls, against a daily budget of $0.10 without a key and $1 with a free API key. A job costs one call per 100 papers, so a 500-paper job is 5 calls. Set `OPENALEX_API_KEY` to raise the daily budget. `OPENALEX_MAILTO` is an optional contact email sent to OpenAlex with each request.
+
+A 429 means the daily budget or rate limit was hit; the job fails right away with that message instead of retrying. 5xx responses are retried up to 3 attempts, waiting for `Retry-After` when sent and backing off exponentially otherwise.
 
 ## Tests
 

@@ -118,7 +118,7 @@ def test_unknown_job_returns_404(client):
         {"query": ""},
         {"query": " , "},
         {"query": "x", "limit": 0},
-        {"query": "x", "limit": 201},
+        {"query": "x", "limit": 501},
         {"query": "x", "sort": "random"},
         {"query": "x", "min_citations": -1},
         {"query": "x", "from_year": 2026, "to_year": 2018},
@@ -134,7 +134,7 @@ def test_build_params_maps_sort_and_year_range():
     )
     assert params == {
         "filter": "title_and_abstract.search:q,publication_year:2018-2026",
-        "per-page": 50,
+        "per_page": 50,
         "sort": "publication_year:desc",
     }
 
@@ -146,6 +146,10 @@ def test_build_params_filters_by_min_citations():
 
     unfiltered = openalex.build_params(JobRequest(query="q", min_citations=0))
     assert "cited_by_count" not in unfiltered["filter"]
+
+
+def test_build_params_caps_per_page():
+    assert openalex.build_params(JobRequest(query="q", limit=500))["per_page"] == 100
 
 
 def test_build_params_strips_commas_from_query():
@@ -306,8 +310,8 @@ def fake_openalex(monkeypatch):
 
         def get(self, url, params=None, timeout=None):
             self.calls.append(params)
-            status, headers = self.responses.pop(0)
-            body = {"results": [WORK]} if status == 200 else {"error": "nope"}
+            status, headers, *results = self.responses.pop(0)
+            body = {"results": results[0] if results else [WORK]} if status == 200 else {}
             return httpx.Response(
                 status, headers=headers, json=body, request=httpx.Request("GET", url)
             )
@@ -321,7 +325,7 @@ def fake_openalex(monkeypatch):
 
 
 def test_fetch_works_retries_with_backoff_and_retry_after(fake_openalex):
-    fake_openalex.responses = [(503, {}), (429, {"Retry-After": "7"}), (200, {})]
+    fake_openalex.responses = [(503, {}), (503, {"Retry-After": "7"}), (200, {})]
 
     assert openalex.fetch_works(JobRequest(query="q")) == [WORK]
     assert len(fake_openalex.calls) == 3
@@ -336,6 +340,59 @@ def test_fetch_works_gives_up_after_max_attempts(client, fake_openalex):
     assert body["status"] == "FAILED"
     assert body["error"] == "OpenAlexError: openalex returned 503 after 3 attempts, try again later"
     assert fake_openalex.sleeps == [1.0, 2.0]
+
+
+def test_rate_limit_fails_job_without_retrying(client, fake_openalex):
+    fake_openalex.responses = [(429, {"Retry-After": "60"})]
+
+    body = run_job(client)
+
+    assert body["status"] == "FAILED"
+    assert body["error"] == (
+        "OpenAlexError: openalex daily budget or rate limit hit (429), "
+        "try again later or set OPENALEX_API_KEY for a larger budget"
+    )
+    assert len(fake_openalex.calls) == 1
+    assert fake_openalex.sleeps == []
+
+
+def test_rate_limit_message_skips_key_hint_when_key_set(fake_openalex, monkeypatch):
+    monkeypatch.setattr(settings, "openalex_api_key", "secret-key")
+    fake_openalex.responses = [(429, {})]
+
+    with pytest.raises(openalex.OpenAlexError) as error:
+        openalex.fetch_works(JobRequest(query="q"))
+    assert str(error.value) == "openalex daily budget or rate limit hit (429), try again later"
+
+
+def works(start, stop):
+    return [{**WORK, "id": f"https://openalex.org/W{i}"} for i in range(start, stop)]
+
+
+def test_fetch_works_paginates_in_rank_order_and_dedupes(fake_openalex):
+    # page 2 repeats W100, as happens when rankings shift between requests
+    fake_openalex.responses = [
+        (200, {}, works(1, 101)),
+        (200, {}, works(100, 200)),
+        (200, {}, works(200, 261)),
+    ]
+
+    result = openalex.fetch_works(JobRequest(query="q", limit=250))
+
+    assert [work["id"] for work in result] == [w["id"] for w in works(1, 251)]
+    assert [call["page"] for call in fake_openalex.calls] == [1, 2, 3]
+    assert all(call["per_page"] == 100 for call in fake_openalex.calls)
+    assert all("cursor" not in call for call in fake_openalex.calls)
+
+
+def test_fetch_works_stops_when_results_run_out(client, fake_openalex):
+    fake_openalex.responses = [(200, {}, works(1, 101)), (200, {}, works(101, 131))]
+
+    body = run_job(client, limit=500)
+
+    assert body["status"] == "COMPLETED"
+    assert body["papers_found"] == 130
+    assert [call["page"] for call in fake_openalex.calls] == [1, 2]
 
 
 def test_fetch_works_does_not_retry_client_errors(fake_openalex, monkeypatch):
