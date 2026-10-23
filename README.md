@@ -1,6 +1,6 @@
 # Bibliography Fetch Grid
 
-A literature search tool built on scholarly metadata from [OpenAlex](https://openalex.org). Search a topic, get a ranked, deduplicated table of papers, save the ones you want into collections, and export them as BibTeX, RIS or CSV for a reference manager.
+A literature search tool built on scholarly metadata from [OpenAlex](https://openalex.org). Search a topic, get a ranked, deduplicated table of papers, save the ones you want into collections, and export them as BibTeX, RIS or CSV for a reference manager. Saved searches rerun on demand or on a daily or weekly schedule and show which papers are new since the previous run.
 
 Each search runs as a background job: the API returns a job ID immediately and the web UI polls until the results are stored in PostgreSQL.
 
@@ -89,7 +89,7 @@ Jobs are queued in Postgres and run one at a time by a worker thread inside the 
 
 A scheduled saved search runs as soon as it is created, then once per day or week, counted from its last run; runs missed while the server was down collapse into one. The worker enqueues due searches with `SELECT … FOR UPDATE SKIP LOCKED`, so two workers checking at once enqueue each search once. Each scheduled run costs the same OpenAlex calls as a manual one.
 
-OpenAlex bills per request: $1 per 1,000 search calls, against a daily budget of $0.10 without a key and $1 with a free API key. A job costs one call per 100 papers, so a 500-paper job is 5 calls. Set `OPENALEX_API_KEY` to raise the daily budget. `OPENALEX_MAILTO` is an optional contact email sent to OpenAlex with each request.
+OpenAlex bills per request: $1 per 1,000 search calls, against a daily budget of $0.10 without a key and $1 with a free API key. A job costs one call per 100 papers, so a 500-paper job is 5 calls. Set `OPENALEX_API_KEY` to raise the daily budget. Unless the account has prepaid usage, that budget is a hard cap: once it is spent, searches fail until it resets at midnight UTC, and nothing is charged. `OPENALEX_MAILTO` is an optional contact email sent to OpenAlex with each request.
 
 A 429 means the daily budget or rate limit was hit; the job fails right away with that message instead of retrying. 5xx responses are retried up to 3 attempts, waiting for `Retry-After` when sent and backing off exponentially otherwise.
 
@@ -100,3 +100,5 @@ pytest
 ```
 
 Tests run against `TEST_DATABASE_URL`, apply the migrations from scratch, and mock OpenAlex.
+
+GitHub Actions runs on every push and pull request: one job runs `pytest` against a Postgres 17 service, and another runs `docker compose up --build --wait` and fails unless `/health` returns `{"status":"ok"}`.
