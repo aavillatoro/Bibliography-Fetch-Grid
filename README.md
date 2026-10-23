@@ -31,6 +31,14 @@ uvicorn app.main:app --reload
 
 The web UI is at http://localhost:8000 and the interactive API docs are at http://localhost:8000/docs.
 
+## Docker
+
+```sh
+docker compose up
+```
+
+This builds the API image, starts Postgres 17, applies migrations and serves the API at http://localhost:8000. No local Python or Postgres is needed, and `.env` is optional: compose reads `OPENALEX_API_KEY`, `OPENALEX_MAILTO` and `POSTGRES_PASSWORD` (default `change-me`) from it when present and sets `DATABASE_URL` itself. The database lives in the `pgdata` volume. After code changes, run `docker compose up --build`; `docker compose down -v` deletes the database. Requires Docker Compose 2.24 or later.
+
 ## API
 
 | Method | Path | |

@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: bfg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: bibliography_fetch_grid
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bfg -d bibliography_fetch_grid"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # overrides the localhost url in .env, which points outside the container
+      DATABASE_URL: postgresql+psycopg://bfg:${POSTGRES_PASSWORD:-change-me}@db:5432/bibliography_fetch_grid
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # the job worker waits up to 30s for a running job on shutdown
+    stop_grace_period: 40s
+
+volumes:
+  pgdata:
