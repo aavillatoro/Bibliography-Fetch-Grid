@@ -1,8 +1,18 @@
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from time import sleep
+
 import httpx
 
+from app.config import settings
 from app.schemas import JobRequest, Paper
 
 BASE_URL = "https://api.openalex.org/works"
+
+MAX_ATTEMPTS = 3
+BASE_DELAY = 1.0
+# a huge retry-after would otherwise stall the job worker
+MAX_DELAY = 30.0
 
 SORT_PARAMS = {
     "citations_desc": "cited_by_count:desc",
@@ -75,7 +85,55 @@ def rebuild_abstract(inverted_index: dict[str, list[int]] | None) -> str | None:
     return " ".join(positions[i] for i in sorted(positions))
 
 
+class OpenAlexError(Exception):
+    pass
+
+
 def fetch_works(request: JobRequest) -> list[dict]:
-    response = httpx.get(BASE_URL, params=build_params(request), timeout=10)
-    response.raise_for_status()
-    return response.json()["results"]
+    params = build_params(request)
+    if settings.openalex_mailto:
+        params["mailto"] = settings.openalex_mailto
+    if settings.openalex_api_key:
+        params["api_key"] = settings.openalex_api_key
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        response = httpx.get(BASE_URL, params=params, timeout=10)
+        if response.is_success:
+            return response.json()["results"]
+        if not is_retryable(response.status_code):
+            # httpx's own error includes the url, which would leak api_key into job.error
+            raise OpenAlexError(f"openalex returned {response.status_code}")
+        if attempt < MAX_ATTEMPTS:
+            sleep(retry_delay(response, attempt))
+
+    raise OpenAlexError(
+        f"openalex returned {response.status_code} after {MAX_ATTEMPTS} attempts, try again later"
+    )
+
+
+def is_retryable(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
+
+
+def retry_delay(response: httpx.Response, attempt: int) -> float:
+    delay = parse_retry_after(response.headers.get("retry-after"))
+    if delay is None:
+        delay = BASE_DELAY * 2 ** (attempt - 1)
+    return min(delay, MAX_DELAY)
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    # the header is either delay-seconds or an http date
+    if not value:
+        return None
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max((retry_at - datetime.now(timezone.utc)).total_seconds(), 0.0)

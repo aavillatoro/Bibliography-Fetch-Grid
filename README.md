@@ -65,6 +65,8 @@ POST /jobs
 
 Jobs move through `QUEUED → FETCHING → PROCESSING → COMPLETED`, or to `FAILED` with an `error` message. Each paper carries its title, authors, year, venue, type, citation count, DOI, abstract and open-access link. Papers are deduplicated by OpenAlex ID and shared across jobs. A job still running when the API restarts is marked `FAILED`.
 
+OpenAlex requests that get a 429 or 5xx are retried up to 3 attempts, waiting for `Retry-After` when sent and backing off exponentially otherwise. Set `OPENALEX_MAILTO` to your email to use OpenAlex's polite pool, and `OPENALEX_API_KEY` if you have an OpenAlex API key.
+
 ## Tests
 
 ```sh

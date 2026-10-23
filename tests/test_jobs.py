@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app import jobs, openalex
+from app.config import settings
 from app.main import app
 from app.models import Job, JobPaper, Paper
 from app.schemas import JobRequest, JobStatus
@@ -293,3 +294,96 @@ def test_index_serves_ui(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert client.get("/static/app.js").status_code == 200
+
+
+@pytest.fixture
+def fake_openalex(monkeypatch):
+    class FakeOpenAlex:
+        def __init__(self):
+            self.responses = []
+            self.calls = []
+            self.sleeps = []
+
+        def get(self, url, params=None, timeout=None):
+            self.calls.append(params)
+            status, headers = self.responses.pop(0)
+            body = {"results": [WORK]} if status == 200 else {"error": "nope"}
+            return httpx.Response(
+                status, headers=headers, json=body, request=httpx.Request("GET", url)
+            )
+
+    fake = FakeOpenAlex()
+    monkeypatch.setattr(openalex.httpx, "get", fake.get)
+    monkeypatch.setattr(openalex, "sleep", fake.sleeps.append)
+    monkeypatch.setattr(settings, "openalex_mailto", None)
+    monkeypatch.setattr(settings, "openalex_api_key", None)
+    return fake
+
+
+def test_fetch_works_retries_with_backoff_and_retry_after(fake_openalex):
+    fake_openalex.responses = [(503, {}), (429, {"Retry-After": "7"}), (200, {})]
+
+    assert openalex.fetch_works(JobRequest(query="q")) == [WORK]
+    assert len(fake_openalex.calls) == 3
+    assert fake_openalex.sleeps == [1.0, 7.0]
+
+
+def test_fetch_works_gives_up_after_max_attempts(client, fake_openalex):
+    fake_openalex.responses = [(500, {}), (502, {}), (503, {})]
+
+    body = run_job(client)
+
+    assert body["status"] == "FAILED"
+    assert body["error"] == "OpenAlexError: openalex returned 503 after 3 attempts, try again later"
+    assert fake_openalex.sleeps == [1.0, 2.0]
+
+
+def test_fetch_works_does_not_retry_client_errors(fake_openalex, monkeypatch):
+    monkeypatch.setattr(settings, "openalex_api_key", "secret-key")
+    fake_openalex.responses = [(403, {})]
+
+    with pytest.raises(openalex.OpenAlexError) as error:
+        openalex.fetch_works(JobRequest(query="q"))
+    assert str(error.value) == "openalex returned 403"
+    assert fake_openalex.sleeps == []
+
+
+def test_fetch_works_sends_mailto_when_configured(fake_openalex, monkeypatch):
+    fake_openalex.responses = [(200, {}), (200, {})]
+
+    openalex.fetch_works(JobRequest(query="q"))
+    monkeypatch.setattr(settings, "openalex_mailto", "me@example.org")
+    openalex.fetch_works(JobRequest(query="q"))
+
+    assert "mailto" not in fake_openalex.calls[0]
+    assert fake_openalex.calls[1]["mailto"] == "me@example.org"
+
+
+def test_fetch_works_sends_api_key_when_configured(fake_openalex, monkeypatch):
+    fake_openalex.responses = [(200, {}), (200, {})]
+
+    openalex.fetch_works(JobRequest(query="q"))
+    monkeypatch.setattr(settings, "openalex_api_key", "secret-key")
+    openalex.fetch_works(JobRequest(query="q"))
+
+    assert "api_key" not in fake_openalex.calls[0]
+    assert fake_openalex.calls[1]["api_key"] == "secret-key"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("3", 3.0),
+        ("-5", 0.0),
+        ("Wed, 21 Oct 2015 07:28:00 GMT", 0.0),
+        ("soon", None),
+        (None, None),
+    ],
+)
+def test_parse_retry_after(value, expected):
+    assert openalex.parse_retry_after(value) == expected
+
+
+def test_retry_delay_is_capped():
+    response = httpx.Response(429, headers={"Retry-After": "3600"})
+    assert openalex.retry_delay(response, 1) == openalex.MAX_DELAY
