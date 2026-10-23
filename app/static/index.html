@@ -62,6 +62,18 @@
       <button id="save-search" class="secondary" type="button">Save search</button>
     </form>
 
+    <div class="lists">
+      <section id="saved" hidden>
+        <h2>Saved searches</h2>
+        <ul id="saved-list" class="plain"></ul>
+      </section>
+
+      <section id="collections" hidden>
+        <h2>Collections</h2>
+        <ul id="collection-list" class="plain"></ul>
+      </section>
+    </div>
+
     <p id="status" role="status" aria-live="polite"></p>
 
     <section id="results" hidden>
@@ -106,16 +118,6 @@
           <tbody id="rows"></tbody>
         </table>
       </div>
-    </section>
-
-    <section id="saved" hidden>
-      <h2>Saved searches</h2>
-      <ul id="saved-list" class="plain"></ul>
-    </section>
-
-    <section id="collections" hidden>
-      <h2>Collections</h2>
-      <ul id="collection-list" class="plain"></ul>
     </section>
 
     <section id="recent" hidden>

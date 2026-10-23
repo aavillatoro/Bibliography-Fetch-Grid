@@ -131,6 +131,17 @@ form button {
   cursor: pointer;
 }
 
+.lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0 32px;
+  margin-bottom: 8px;
+}
+
+.lists h2 {
+  margin-top: 8px;
+}
+
 form button.secondary {
   color: var(--text);
   background: var(--surface);
